@@ -52,12 +52,28 @@ class ProcessFile():
         chunk_df['similarity'] = chunk_df['embedding'].apply(lambda x: self.openai.cosine_similarity(x, self.openai.get_embedding(q)))
         return chunk_df.sort_values('similarity', ascending=False)
            
-    def completionCv(self, question, cv_chunk_result):
+    def completionFile(self, question, cv_chunk_result, useInternet):
         jsonData = json.dumps(cv_chunk_result['chunk'])
                         
-        prompt = f"Dado el siguient JSON:\n{jsonData}\nDevuelve un json con el siguiente formato:\n - 'response' Una respuesta descriptiva y formal indicando que name o names (refiriendote a estos como empleado) contestan mejor a la pregunta y porque (no debes nombrar ningun identificador)\n - 'id_results' Una lista de objetos con información del identificador o identificadores que mejor contestes a la pregunta y que mencionaste en la respuesta anterior. Debe tener el siguiente formato:\n · 'id': El identificador\nPregunta:\n{question}\nSi no encuentras ningún resultado o respuesta, indicalo en el 'message' y su porque y la lista de id_results debería estar vacía"        
+        prompt = f"Dado el siguient JSON:\n{jsonData}\nDevuelve un json con el siguiente formato:\n - 'response' Una respuesta descriptiva y que conteste de la mejor manera a la pregunta (Puedes citar partes de los textos)\n - 'id_results' Una lista de objetos con información del identificador o identificadores que mejor contestes a la pregunta y que mencionaste en la respuesta anterior. Debe tener el siguiente formato:\n · 'id': El identificador\nPregunta:\n{question}\nSi no encuentras ningún resultado o respuesta, " + ("intenta contestarla con tus conocimientos" if useInternet else "indicalo en el 'response' y su porque")       
                 
         return self.openai.completion(prompt).replace("\n", "").replace("\t", "")
+       
+    def completionFileChat(self, question, chat, context, useInternet):
+        prompt = f"Dado el siguient contexto:\n{context}\nY siguiendo la conversación donde tu eres 'assistent':\n{str(chat)}\nDevuelve un json con el siguiente formato:\n - 'response' Una respuesta descriptiva y que conteste de la mejor manera a la pregunta (Puedes citar partes de los textos)\nPregunta:\n{question}\nSi no encuentras ningún resultado o respuesta, " + ("intenta contestarla con tus conocimientos" if useInternet else "indicalo en el 'response' y su porque")
+        
+        return self.openai.completion(prompt).replace("\n", "").replace("\t", "").replace("'", '"')   
+       
+    def isContextInChat(self, question, context, useInternet):
+        
+        prompt = f"Dado el siguiente contexto" + (" y tus conocimientos" if useInternet else "") + f":\n{context}\nDevuelve solamente un True o un False en función de si eres capaz de responder a la siguiente pregunta:\n{question}"
+       
+        r = self.openai.completion(prompt).replace("\n", "").replace("\t", "").strip()
+       
+        print(prompt)
+        print("------> isContextInChat: " + r)
+       
+        return  r == "True"
        
     def loadNewFile(self, file, id, name, pdfSavePath, subject, userId):
         
@@ -95,18 +111,39 @@ class ProcessFile():
             for id in list:
                 self.deleteCsvFile(id)
     
-    def queryDocuments(self, query):
+    def queryDocuments(self, query, subjectId, userId, fileId = None, chat = None, context = None, useInternet = False):
         
-        cv_data = self.readCsvData()
+        filesSubject = self.subject.getFiles(subjectId, userId)
+        
+        if filesSubject is None: return False
+        
+        if chat is not None and context is not None:
+            
+            if self.isContextInChat(query, context, useInternet):
+                
+                response = self.completionFileChat(query, chat, context, useInternet)
+                
+                print("IsContextInChat")
+                print(response)
+                
+                start_pos = response.find("{")
+                end_pos = response.rfind("}")
+
+                if start_pos != -1 and end_pos != -1:
+                    json_str = response[start_pos:end_pos+1]
+                    data = json.loads(json_str)
+                    
+                    return data
+                
+                return None
+            
+            return self.queryDocuments(query, subjectId, userId, fileId, useInternet=useInternet)
         
         cv = {
                 'chunk': {},
             }
         
-        for _id in cv_data.index.to_list():
-        
-            id = _id
-        
+        def processFile(id):
             cv_df = self.readCsvFile(id)
             
             cv_df['embedding'] = cv_df['embedding'].apply(lambda x : [float(value) for value in x.replace('[', '').replace(']', '').replace(' ', '').split(',')])
@@ -114,13 +151,17 @@ class ProcessFile():
             cv_df = self.searchCv(cv_df, query)
                 
             cv['chunk'][str(id)] = {
-                'text': cv_df.loc[cv_df.index.to_list()[0], 'chunk'] + ". " + cv_df.loc[cv_df.index.to_list()[1], 'chunk'],
-                'name': cv_data.loc[id]['name']
-                }
-            
-        cv_df = pd.DataFrame(cv)
+                'text': cv_df.loc[cv_df.index.to_list()[0], 'chunk'] + ". " + cv_df.loc[cv_df.index.to_list()[1], 'chunk']
+            }
         
-        response = self.completionCv(query, cv)
+        if fileId is None:
+            for file in filesSubject:
+                processFile(file.id)
+        else:
+            processFile(fileId)
+
+                    
+        response = self.completionFile(query, cv, useInternet)
         
         print(response)
         
@@ -134,7 +175,6 @@ class ProcessFile():
     
             for result in data['id_results']:
                 result['text'] = cv['chunk'][result['id']]['text']
-                result['name'] = cv['chunk'][result['id']]['name']
             
             return data
         

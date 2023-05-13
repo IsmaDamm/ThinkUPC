@@ -469,11 +469,26 @@ class FileView(View):
         return failedResponse('Not Acceptable', f"The id '{id}' does not exist", 406)                       
     
 @method('GET')  
-def query(request):
+def query(request, id = None ):
+    
+    userId = getUserIdTokenBareer(request)
+        
+    if userId is None or not user.exists(userId): return failedResponse('Forbidden', 'Token error', 403)
+    
+    if id is None or id <= 0: return failedResponse('Bad Request', 'Subject id invalid')
+    
+    if 'q' not in request.GET: return failedResponse('Bad Request', "Paramettre 'q' is required", 400)
     
     query = request.GET.get('q')
     
-    result = process.queryDocuments(query)
+    fileId = request.GET.get('file') if 'file' in request.GET else None
+    
+    useInternet = 'use_internet' in request.GET
+    
+    result = process.queryDocuments(query, id, userId, fileId, useInternet=useInternet)
+    
+    if result == False:
+        return failedResponse('Not Acceptable', f"The subject id '{id}' does not exists", 406)
         
     if result is None:
         return failedResponse('Internal Server Error', 'Unexpected response from Openai', 500)
@@ -484,6 +499,48 @@ def query(request):
     result['query'] = query
     
     return succesResponse(result)
+
+@method('POST')
+def queryChat(request, id = None):
+    userId = getUserIdTokenBareer(request)
+        
+    if userId is None or not user.exists(userId): return failedResponse('Forbidden', 'Token error', 403)
+    
+    if id is None or id <= 0: return failedResponse('Bad Request', 'Subject id invalid')
+    
+    try:
+        data = json.loads(request.body)
+        
+        requiredKeys = ['q', 'chat', 'context']
+        
+        for k in requiredKeys:
+            if k not in data.keys():
+                return failedResponse('Bad Request', f"The value '{k}' is required", 400)
+                    
+    except json.JSONDecodeError:       
+        return failedResponse('Bad Request', 'Invalid data JSON', 400)    
+
+    query = str(data['q'])
+    context = str(data['context'])
+    fileId = data['file'] if 'file' in data.keys() else None
+    chat = data['chat']
+    useInternet = data['use_internet'] if 'use_internet' in data.keys() else False
+    
+    result = process.queryDocuments(query, id, userId, fileId, chat=chat, context = context, useInternet=useInternet)
+    
+    if result == False:
+        return failedResponse('Not Acceptable', f"The subject id '{id}' does not exists", 406)
+        
+    if result is None:
+        return failedResponse('Internal Server Error', 'Unexpected response from Openai', 500)
+        
+    if 'id_results' in result:
+        for r in result['id_results']:
+            r['url'] = "/" + settings.PUBLIC_MEDIA_URL + r['id'] + ".pdf"
+    
+    result['query'] = query
+    
+    return succesResponse(result)    
 
 @method('DELETE')
 def removeAll(request):
