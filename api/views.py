@@ -18,12 +18,13 @@ from openai.embeddings_utils import get_embedding
 from api.classes.Openai import Openai
 import os
 from django.urls import reverse
-from api.crud import Subject
+from api.crud import Subject, User
 
 publicFileStorage = PublicFileStorage()
 privateFileStorage = PrivateFileStorage()
 
 subject = Subject()
+user = User()
 
 process = ProcessFile(privateFileStorage)
 
@@ -39,27 +40,6 @@ def method(method = 'GET'):
         return wrapper
     
     return dec
-
-def getToken(request):
-    return request.headers.get('Authorization').split(' ')[1]
-
-def isValidToken(token):
-    return True
-
-def auth(fun):
-    def wrapper(request, *args, **kwargs):
-        authorization_header = request.headers.get('Authorization')
-
-        if authorization_header and 'Bearer ' in authorization_header:
-            token = authorization_header.split(' ')[1]
-            
-            if not isValidToken(token):
-                return failedResponse('Unauthorized', 'Invalid token bareer', 401)
-        else:
-            return failedResponse('Unauthorized', 'A token bareer authentication is required', 401)
-    
-    return wrapper    
-    
 
 def succesResponse(body, _status = 200):
     return HttpResponse(
@@ -92,6 +72,28 @@ def notImplementedEndPoint(msg = ''):
 def generateId():
     return str(random.randint(1, 100)) + str(int(datetime.datetime.now().strftime("%d%H%M%S%f")))
 
+def getTokenBareer(request):
+    authorization_header = request.headers.get('Authorization')
+    
+    if authorization_header and 'Bearer ' in authorization_header:
+        return authorization_header.split(' ')[1]
+    
+    return None
+
+def getUserIdTokenBareer(request):
+    
+    token = getTokenBareer(request)
+    
+    if token is None: return None
+    
+    decode = user.decode_token(token)
+    
+    if decode is None: return None
+    
+    id, password = decode
+    
+    return id
+    
 class PublicFileView(View):
     @method_decorator(csrf_exempt)
     def dispatch(self, request: HttpRequest, *args: Any, **kwargs: Any) -> HttpResponse:
@@ -104,22 +106,140 @@ class PublicFileView(View):
         else:
             return HttpResponseNotFound()
 
-class UserView(View):
+class UserView(View): #Need token bareer
     @method_decorator(csrf_exempt)
     def dispatch(self, request: HttpRequest, *args: Any, **kwargs: Any) -> HttpResponse:
         return super().dispatch(request, *args, **kwargs)
     
+    def get(self, request): #Get personal user info
+        
+        id = getUserIdTokenBareer(request)
+        
+        if id is None: return failedResponse('Forbidden', 'Token error', 403)
+        
+        if not user.exists(id): return failedResponse('Bad Request', 'User does not exists', 400)
+        
+        u = user.get(id)
+        
+        return succesResponse(
+            {
+                'id': u.id,
+                'name': u.name,
+                'backname': u.backname,
+                'mail': u.email
+            }
+        )
     
-    def post(self, request):
+    def put(self, request): #Update personal user info
         
-        authorization_header = request.headers.get('Authorization')
-
-        if authorization_header and 'Bearer ' in authorization_header:
-            token = authorization_header.split(' ')[1]
+        id = getUserIdTokenBareer(request)
+        
+        if id is None: return failedResponse('Forbidden', 'Token error', 403)
+        
+        if not user.exists(id): return failedResponse('Bad Request', 'User does not exists', 400)
+        
+        try:
+            data = json.loads(request.body)
             
-            return succesResponse(token)
+            requiredKeys = ['name', 'mail', 'password']
+            
+            for k in requiredKeys:
+                if k not in data.keys() or len(str(data[k].strip())) == 0:
+                    return failedResponse('Bad Request', f"The value '{k}' is required", 400)
+                        
+        except json.JSONDecodeError:       
+            return failedResponse('Bad Request', 'Invalid data JSON', 400)
         
-        return notImplementedEndPoint()    
+        if 'backname' not in data: data['backname'] = ''
+        
+        u = user.update(id, data['name'], data['backname'], data['mail'], data['password'])
+        
+        if u is None: return failedResponse('Forbidden', 'This email already exists', 406)
+        
+        return succesResponse(
+            {
+                'id': u.id,
+                'name': u.name,
+                'backname': u.backname,
+                'mail': u.email
+            }
+        )    
+    
+    def delete(self, request): #Delete user
+        
+        id = getUserIdTokenBareer(request)
+        
+        if id is None: return failedResponse('Forbidden', 'Token error', 403)
+        
+        if not user.exists(id): return failedResponse('Bad Request', 'User does not exists', 400)
+        
+        user.remove(id)
+        
+        return succesResponse('', 204)
+
+@method('POST')
+def login(request): #Login mail, pass and return new token
+    authorization_header = request.headers.get('Authorization')
+    
+    if authorization_header and 'Bearer ' in authorization_header:
+        token = authorization_header.split(' ')[1]
+        
+        decode = user.decode_token(token)
+        
+        if decode is not None:
+            id, password = decode
+            
+            return succesResponse({'id': id, 'token': user.make_token(id, password)})
+        
+        return failedResponse('Forbidden', 'Invalid token', 403)
+    
+    try:
+        data = json.loads(request.body)
+        
+        requiredKeys = ['mail', 'password']
+        
+        for k in requiredKeys:
+            if k not in data.keys() or len(str(data[k].strip())) == 0:
+                return failedResponse('Bad Request', f"The value '{k}' is required", 400)
+                    
+    except json.JSONDecodeError:       
+        return failedResponse('Bad Request', 'Invalid data JSON', 400)
+    
+    u = user.login(data['mail'], data['password'])
+    
+    if u is None: return failedResponse('Forbidden', 'Invalid credentials', 403)
+    
+    return succesResponse({
+        'id': u.id,
+        'token': user.make_token(u.id, u.password)
+    })
+    
+
+@method('POST')
+def register(request): #Register and return new token
+    try:
+        data = json.loads(request.body)
+        
+        requiredKeys = ['name', 'mail', 'password']
+        
+        for k in requiredKeys:
+            if k not in data.keys() or len(str(data[k].strip())) == 0:
+                return failedResponse('Bad Request', f"The value '{k}' is required", 400)
+                    
+    except json.JSONDecodeError:       
+        return failedResponse('Bad Request', 'Invalid data JSON', 400)
+    
+    if 'backname' not in data: data['backname'] = ''
+    
+    u = user.create(data['name'], data['backname'], data['mail'], data['password'])
+    
+    if u is None: return failedResponse('Forbidden', "This email already exists")
+    
+    token = user.make_token(u.id, u.password)
+    
+    return succesResponse({
+        'token': token
+    });
 
 class SubjectView(View):
     @method_decorator(csrf_exempt)
@@ -130,6 +250,10 @@ class SubjectView(View):
         self.subject = subject
     
     def post(self, request):
+        
+        id = getUserIdTokenBareer(request)
+        
+        if id is None or not user.exists(id): return failedResponse('Forbidden', 'Token error', 403)
         
         try:
             data = json.loads(request.body)
@@ -143,7 +267,7 @@ class SubjectView(View):
         except json.JSONDecodeError:       
             return failedResponse('Bad Request', 'Invalid data JSON', 400)
                 
-        s = self.subject.create(name = data['name'], color = data['color'])
+        s = self.subject.create(name = data['name'], color = data['color'], userId=id)
         
         return succesResponse(
             {
@@ -155,7 +279,11 @@ class SubjectView(View):
 
     def get(self, request, id = None):
         
-        data = self.subject.get(id)
+        userId = getUserIdTokenBareer(request)
+        
+        if userId is None or not user.exists(userId): return failedResponse('Forbidden', 'Token error', 403)
+                
+        data = self.subject.get(userId, id)
         
         if id is None: return succesResponse(
             [
@@ -167,7 +295,7 @@ class SubjectView(View):
                 for x in data]
             )
         
-        if not self.subject.exists(id): return failedResponse('Not Acceptable', f"The id '{id}' does not exist", 406)
+        if not self.subject.exists(id, userId): return failedResponse('Not Acceptable', f"The id '{id}' does not exist", 406)
         
         return succesResponse(
             {
@@ -179,21 +307,29 @@ class SubjectView(View):
     
     def delete(self, request, id = None):
         
+        userId = getUserIdTokenBareer(request)
+        
+        if userId is None or not user.exists(userId): return failedResponse('Forbidden', 'Token error', 403)
+        
         if id is None:
-            self.subject.remove()
+            self.subject.remove(userId)
             return succesResponse('', 204)    
 
-        if not self.subject.exists(id): return failedResponse('Not Acceptable', f"The id '{id}' does not exist", 406)
+        if not self.subject.exists(id, userId): return failedResponse('Not Acceptable', f"The id '{id}' does not exist", 406)
         
-        self.subject.remove(id)
-        
+        r = self.subject.remove(userId, id)
+                
         return succesResponse('', 204)
     
     def put(self, request, id = None):
         
+        userId = getUserIdTokenBareer(request)
+        
+        if userId is None or not user.exists(userId): return failedResponse('Forbidden', 'Token error', 403)
+        
         if id is None or id <= 0: return failedResponse('Bad Request', f"Invalid Id", 400)
         
-        if not self.subject.exists(id): return failedResponse('Not Acceptable', f"The '{id}' dose not exists", 406)
+        if not self.subject.exists(id, userId): return failedResponse('Not Acceptable', f"The '{id}' dose not exists", 406)
         
         try:
             data = json.loads(request.body)
@@ -207,7 +343,7 @@ class SubjectView(View):
         except json.JSONDecodeError:       
             return failedResponse('Bad Request', 'Invalid data JSON', 400)
         
-        s = self.subject.update(id, data['name'], data['color'])
+        s = self.subject.update(id, data['name'], data['color'], userId)
 
         return succesResponse(
             {
@@ -234,9 +370,13 @@ class FileView(View):
     
     def get(self, request, id = None):
         
+        userId = getUserIdTokenBareer(request)
+        
+        if userId is None or not user.exists(userId): return failedResponse('Forbidden', 'Token error', 403)        
+        
         if id is not None and id <= 0: return failedResponse('Bad Request', 'Invalid id', 400)
         
-        data = self.process.getDataDocuments(id)
+        data = self.process.getDataDocuments(userId, id)
         
         if id is not None:
                         
@@ -250,6 +390,10 @@ class FileView(View):
         return succesResponse(data)
      
     def post(self, request, id = None):
+        
+        userId = getUserIdTokenBareer(request)
+        
+        if userId is None or not user.exists(userId): return failedResponse('Forbidden', 'Token error', 403)
                 
         if 'pdf_file' not in request.FILES:
             return failedResponse('Bad Request', "Pdf file not found by key 'pdf_file'", 400)  
@@ -274,7 +418,7 @@ class FileView(View):
                 
         urlPublicStorage = self.publicFileStorage.save(file, pdfName + ".pdf")
                                 
-        data = self.process.loadNewFile(file, pdfName, name, urlPublicStorage.localPath, id)
+        data = self.process.loadNewFile(file, pdfName, name, urlPublicStorage.localPath, id, userId)
                 
         if data == False: return failedResponse('Not Acceptable', f"The subject id '{id}' does not exist", 406)   
                 
@@ -283,6 +427,11 @@ class FileView(View):
         return succesResponse(data, 201)
     
     def put(self, request, id = None):
+        
+        userId = getUserIdTokenBareer(request)
+        
+        if userId is None or not user.exists(userId): return failedResponse('Forbidden', 'Token error', 403)
+        
         if id is None or id <= 0: return failedResponse('Bad Request', 'Invalid id', 400)
 
         try:
@@ -297,7 +446,7 @@ class FileView(View):
         except json.JSONDecodeError:       
             return failedResponse('Bad Request', 'Invalid data JSON', 400)
 
-        result = self.process.updateDataDocument(id, data['name'], data['subject'])
+        result = self.process.updateDataDocument(id, data['name'], data['subject'], userId)
     
         if result == False: return failedResponse('Not Acceptable', f"The file id '{id}' or subject id '{data['subject']}' does not exist", 406)
         
@@ -307,9 +456,13 @@ class FileView(View):
         
     def delete(self, request, id = None):
         
+        userId = getUserIdTokenBareer(request)
+        
+        if userId is None or not user.exists(userId): return failedResponse('Forbidden', 'Token error', 403)
+        
         if id is None or id <= 0: return failedResponse('Bad Request', 'Invalid id', 400)
         
-        if self.process.deleteDocument(id):
+        if self.process.deleteDocument(userId, id):
             self.publicFileStorage.remove(str(id) + ".pdf")
             return succesResponse('', 204)
         
@@ -334,14 +487,23 @@ def query(request):
 
 @method('DELETE')
 def removeAll(request):
-    process.deleteAllDocuments()
+    userId = getUserIdTokenBareer(request)
     
-    publicFileStorage.removeAllFiles()
+    if userId is None or not user.exists(userId): return failedResponse('Forbidden', 'Token error', 403)
     
+    idsRemove = process.deleteAllDocuments(userId)
+    
+    for id in idsRemove:
+        publicFileStorage.remove(id + ".pdf")
+        
     return succesResponse('', 204)
 
 @method('POST')
 def updateFile(request, idFile = None):
+    
+    userId = getUserIdTokenBareer(request)
+    
+    if userId is None or not user.exists(userId): return failedResponse('Forbidden', 'Token error', 403)
     
     if idFile is None or idFile <= 0: return failedResponse('Bad Request', 'Invalid id', 400)
 
@@ -365,73 +527,32 @@ def updateFile(request, idFile = None):
     
     id = int(request.POST.get('subject'))
             
-    data = process.updateDataDocument(idFile, name, id)
+    data = process.updateDataDocument(idFile, name, id, userId)
     
-    data['url'] = "/" + settings.PUBLIC_MEDIA_URL + str(idFile) + ".pdf"
-    
-    data = process.updatePreProcess(idFile, file)
+    if data == False: return failedResponse('Not Acceptable', f"The file id '{idFile}' or subject id '{id}' does not exist", 406)
+        
+    data = process.updatePreProcess(idFile, file, userId)
     
     if data == False: return failedResponse('Not Acceptable', f"The file id '{idFile}' does not exist", 406)
     
-    data = process.getDataDocuments(idFile)
+    data = process.getDataDocuments(userId, idFile)
+    
+    data['url'] = "/" + settings.PUBLIC_MEDIA_URL + str(idFile) + ".pdf"
     
     return succesResponse(data) if publicFileStorage.update(file, str(idFile) + '.pdf') else failedResponse('Not Acceptable', f"File '{idFile}' not found", 406)
       
-
-@method('POST')
-def uploadFile(request):
-    
-    if 'pdf_file' not in request.FILES:
-        return failedResponse('Bad Request', "Pdf file not found by key 'pdf_file'", 400)  
-                
-    file = request.FILES['pdf_file']
-
-    if file.content_type != 'application/pdf':
-        return failedResponse('Unsupported Media Type', 'The file must be PDF file', 415)
-    
-    pdfName = generateId()
-    
-    urlPublicStorage = publicFileStorage.save(file, pdfName + ".pdf")
-    
-    # documentDb.save(file, pdfName + ".pdf")
-    
-    dataSave = {}
-    
-    for key in process.getColumns():
-        dataSave[key] = "Unknown"
-    
-    info_df = process.addCvInfo(pdfName, urlPublicStorage.localPath, dataSave)
-    
-    process.saveCsvData(info_df)
-    
-    return succesResponse(
-        {
-            'id': pdfName,
-            'url': urlPublicStorage.publicURL,
-        }, 201)
-
-def preProcessFile(request, id = None):
-    
-    if id is None or id <= 0: return failedResponse('Bad Request', 'Invalid id', 400)
-    
-    file = publicFileStorage.read(str(id) + ".pdf")
-    
-    if file is None: return failedResponse('Not Acceptable', f"The id '{id}' does not exist", 406)
-    
-    chunks_df = process.preProcess(file)
-        
-    process.saveCsvFile(chunks_df, id)
-    
-    return succesResponse('', 204)
-
 @method('GET')
 def getSubjectAll(request, id = None):
     
+    userId = getUserIdTokenBareer(request)
+    
+    if userId is None or not user.exists(userId): return failedResponse('Forbidden', 'Token error', 403)
+    
     if id is None or id <= 0: return failedResponse('Bad Request', 'Invalid Id', 400)
     
-    if not subject.exists(id): return failedResponse('Not Acceptable', f"The id '{id}' does not found", 406)
+    if not subject.exists(id, userId): return failedResponse('Not Acceptable', f"The id '{id}' does not found", 406)
     
-    files = subject.getFiles(id)
+    files = subject.getFiles(id, userId)
     
     return succesResponse(
         [

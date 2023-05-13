@@ -59,21 +59,21 @@ class ProcessFile():
                 
         return self.openai.completion(prompt).replace("\n", "").replace("\t", "")
        
-    def loadNewFile(self, file, id, name, pdfSavePath, subject):
+    def loadNewFile(self, file, id, name, pdfSavePath, subject, userId):
         
-        if not self.subject.exists(subject): return False
-        
+        if not self.subject.exists(subject, userId): return False
+                
         chunks_df = self.preProcess(file)
         
         self.saveCsvFile(chunks_df, id)
                 
-        self.file.create(id, name, pdfSavePath, subjectId=subject)
+        self.file.create(id, name, pdfSavePath, userId, subjectId=subject)
         
-        return self.getDataDocuments(id)
+        return self.getDataDocuments(userId, id)
     
-    def updatePreProcess(self, id, file):
+    def updatePreProcess(self, id, file, userId):
         
-        if not self.file.exists(id): return False
+        if not self.file.exists(id, userId): return False
         
         chunks_df = self.preProcess(file)
         
@@ -88,8 +88,12 @@ class ProcessFile():
     def deleteCsvFile(self, id):
         return self.fileStorage.remove(f"{self.csvPaths}/{id}.csv")
     
-    def deleteAllCsvFiles(self):
-        self.fileStorage.removeAllFiles(f"{self.csvPaths}/")
+    def deleteAllCsvFiles(self, list = None):
+        if list is None:
+            self.fileStorage.removeAllFiles(f"{self.csvPaths}/")
+        else:
+            for id in list:
+                self.deleteCsvFile(id)
     
     def queryDocuments(self, query):
         
@@ -136,25 +140,29 @@ class ProcessFile():
         
         return None
     
-    def deleteDocument(self, id):
+    def deleteDocument(self, userId, id):
         
-        if not self.file.exists(id): return False
+        if not self.file.exists(id, userId): return False
                 
-        self.file.remove(id)        
+        self.file.remove(userId, id)        
         
         self.deleteCsvFile(id)
         
         return True
         
     
-    def deleteAllDocuments(self):
-                
-        self.file.remove()
+    def deleteAllDocuments(self, userId):
         
-        self.deleteAllCsvFiles()
+        idsRemove = [x['id'] for x in self.getDataDocuments(userId)]
+                
+        self.file.remove(userId)
+        
+        self.deleteAllCsvFiles(idsRemove)
+        
+        return idsRemove
             
         
-    def getDataDocuments(self, id = None):
+    def getDataDocuments(self, userId, id = None):
                 
         def generateData(f):
             return {
@@ -167,17 +175,17 @@ class ProcessFile():
                 }
             }
                     
-        if id is not None: return generateData(self.file.get(id)) if self.file.exists(id) else False
+        if id is not None: return generateData(self.file.get(userId, id)) if self.file.exists(id, userId) else False
 
                         
-        return [generateData(x) for x in self.file.get()]
+        return [generateData(x) for x in self.file.get(userId)]
     
-    def updateDataDocument(self, id, name, subject):
+    def updateDataDocument(self, id, name, subject, userId):
         
-        if not self.file.exists(id) or not self.subject.exists(subject): return False
+        if not self.file.exists(id, userId) or not self.subject.exists(subject, userId): return False
         
-        self.file.update(id, name, subjectId=subject)
+        self.file.update(id, name, userId, subjectId=subject)
         
-        return self.getDataDocuments(id)
+        return self.getDataDocuments(userId, id)
             
         

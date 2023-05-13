@@ -27,13 +27,14 @@ class AuthMiddleware:
 
         if check == True: return callback(request, *args, **kwds)
 
+        return check
 
     def __check(self, request):
         token = self.__tokenBareer(request)
         
-        if token == False: return failedResponse('Unauthorized', 'A token bareer authentication is required', 401)
+        if token == False: return failedResponse('Forbidden', 'A token bareer authentication is required', 403)
                     
-        if not self.__isValidToken(token): return failedResponse('Unauthorized', 'Invalid token bareer', 401)      
+        if not self.__isValidToken(token): return failedResponse('Unauthorized', 'Invalid token bareer', 401)
         
         return True  
 
@@ -55,5 +56,14 @@ def AuthView(view):
     @method_decorator(csrf_exempt)
     def wrapper(request, *args, **kwds):
         return auth.process_view(request, view, *args, **kwds)
+    
+    return wrapper
+
+def AuthFun(callback):
+    auth = AuthMiddleware()
+    
+    @method_decorator(csrf_exempt)
+    def wrapper(request, *args, **kwds):
+        return auth.process_fun(request, callback, *args, **kwds)
     
     return wrapper
