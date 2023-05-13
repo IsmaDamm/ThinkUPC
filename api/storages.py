@@ -7,7 +7,6 @@ import abc
 import pandas as pd
 from pandas._typing import IndexLabel
 from typing import Literal
-from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
 
 
 class FileStorage(abc.ABC):
@@ -127,31 +126,6 @@ class PrivateFileStorage(FileStorage):
         fs = FileSystemStorage(location=settings.MEDIA_ROOT)
         fs.save(name, file)
         return os.path.join(settings.PRIVATE_MEDIA_LOCATION, name)
-    
-    def read(self, name):
-        pass
-    
-class DocumentDbStorage(FileStorage):
-    
-    def __init__(self):
-        super().__init__()
-        
-        
-        
-    def save(self, file, name):
-        
-        sas_url = f"https://documentdb.blob.core.windows.net/cvdocs/{name}?sp=r&st=2023-05-11T09:22:36Z&se=2023-05-11T17:22:36Z&sv=2022-11-02&sr=c&sig=COzDpdkg90s63eHqEy1tGoDWuM742mHnyv2F8%2BEOySo%3D"
-
-        # Crear un cliente del servicio de Blob a partir de la URL de SAS
-        BlobClient.from_blob_url(sas_url)
-
-        # Crear un cliente del contenedor a partir de la URL de SAS
-        ContainerClient.from_container_url(sas_url)
-        
-        self.sas_url = sas_url
-        
-        blob_client = BlobClient.from_blob_url(sas_url)
-        blob_client.upload_blob(data=file, overwrite=True)
     
     def read(self, name):
         pass

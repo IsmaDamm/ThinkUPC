@@ -3,7 +3,7 @@ from django.urls import path
 
 from api.views import FileView, SubjectView
 from api.views import query, removeAll, uploadFile, preProcessFile, updateFile, getSubjectAll, UserView
-
+from api.middleware import AuthView
 
 urlpatterns = [
     
@@ -17,6 +17,6 @@ urlpatterns = [
     path('query/', query, name='query'),
     path('file/upload/', uploadFile, name='uploadFile'),
     path('file/process/<int:id>', preProcessFile, name='processFile'),
-    path('user/', UserView.as_view(), name='user')
+    path('user/', AuthView(UserView()), name='user')
     
 ]

@@ -11,7 +11,7 @@ from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from api.classes.ProcessFile import ProcessFile
 
-from api.storages import PublicFileStorage, PrivateFileStorage, DocumentDbStorage
+from api.storages import PublicFileStorage, PrivateFileStorage
 
 import openai
 from openai.embeddings_utils import get_embedding
@@ -22,7 +22,6 @@ from api.crud import Subject
 
 publicFileStorage = PublicFileStorage()
 privateFileStorage = PrivateFileStorage()
-documentDb = DocumentDbStorage()
 
 subject = Subject()
 
@@ -40,6 +39,27 @@ def method(method = 'GET'):
         return wrapper
     
     return dec
+
+def getToken(request):
+    return request.headers.get('Authorization').split(' ')[1]
+
+def isValidToken(token):
+    return True
+
+def auth(fun):
+    def wrapper(request, *args, **kwargs):
+        authorization_header = request.headers.get('Authorization')
+
+        if authorization_header and 'Bearer ' in authorization_header:
+            token = authorization_header.split(' ')[1]
+            
+            if not isValidToken(token):
+                return failedResponse('Unauthorized', 'Invalid token bareer', 401)
+        else:
+            return failedResponse('Unauthorized', 'A token bareer authentication is required', 401)
+    
+    return wrapper    
+    
 
 def succesResponse(body, _status = 200):
     return HttpResponse(
