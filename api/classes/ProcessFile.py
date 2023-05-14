@@ -12,6 +12,8 @@ from datetime import date
 
 from api.crud import File, Subject
 
+from concurrent.futures import ThreadPoolExecutor
+
 class ProcessFile():
     
     def __init__(self, fileStorage, csvPaths = 'csv_chunks'):
@@ -49,6 +51,7 @@ class ProcessFile():
         return chunks_df        
         
     def searchCv(self, chunk_df, q):
+        
         chunk_df['similarity'] = chunk_df['embedding'].apply(lambda x: self.openai.cosine_similarity(x, self.openai.get_embedding(q)))
         return chunk_df.sort_values('similarity', ascending=False)
            
@@ -155,12 +158,12 @@ class ProcessFile():
             }
         
         if fileId is None:
-            for file in filesSubject:
-                processFile(file.id)
+            with ThreadPoolExecutor() as executor:
+                executor.map(processFile, [x.id for x in filesSubject])
         else:
             processFile(fileId)
 
-                    
+
         response = self.completionFile(query, cv, useInternet)
         
         print(response)
@@ -171,8 +174,7 @@ class ProcessFile():
         if start_pos != -1 and end_pos != -1:
             json_str = response[start_pos:end_pos+1]
             data = json.loads(json_str)
-            
-    
+                            
             for result in data['id_results']:
                 result['text'] = cv['chunk'][result['id']]['text']
             
