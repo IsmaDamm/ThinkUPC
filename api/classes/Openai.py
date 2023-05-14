@@ -4,6 +4,7 @@ from openai.embeddings_utils import get_embedding
 from openai.embeddings_utils import cosine_similarity
 
 import nltk
+nltk.download('punkt')
 
 class Openai():
     
